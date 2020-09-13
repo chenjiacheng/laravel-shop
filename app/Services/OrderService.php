@@ -9,13 +9,14 @@ use App\Models\ProductSku;
 use App\Exceptions\InvalidRequestException;
 use App\Jobs\CloseOrder;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class OrderService
 {
     public function store(User $user, UserAddress $address, $remark, $items)
     {
         // 开启一个数据库事务
-        $order = \DB::transaction(function () use ($user, $address, $remark, $items) {
+        $order = DB::transaction(function () use ($user, $address, $remark, $items) {
             // 更新此地址的最后使用时间
             $address->update(['last_used_at' => Carbon::now()]);
             // 创建一个订单
