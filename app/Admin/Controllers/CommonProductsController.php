@@ -69,13 +69,10 @@ abstract class CommonProductsController extends AdminController
             $form->text('name', '属性名')->rules('required');
             $form->text('value', '属性值')->rules('required');
         });
-        $form->saving(function (Form $form) {
-            $form->model()->price = collect($form->input('skus'))->where(Form::REMOVE_FLAG_NAME, 0)->min('price') ?: 0;
-        });
-        /*$form->saved(function (Form $form) {
+        $form->saved(function (Form $form) {
             $product = $form->model();
             dispatch(new SyncOneProductToES($product));
-        });*/
+        });
 
         return $form;
     }
