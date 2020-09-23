@@ -32,16 +32,15 @@ class ProductsController extends Controller
             ],
         ];
 
-        // 是否有提交 order 参数，如果有就赋值给 $order 变量
-        // order 参数用来控制商品的排序规则
-        if ($order = $request->input('order', '')) {
-            // 是否是以 _asc 或者 _desc 结尾
-            if (preg_match('/^(.+)_(asc|desc)$/', $order, $m)) {
-                // 如果字符串的开头是这 3 个字符串之一，说明是一个合法的排序值
-                if (in_array($m[1], ['price', 'sold_count', 'rating'])) {
-                    // 根据传入的排序值来构造排序参数
-                    $params['body']['sort'] = [[$m[1] => $m[2]]];
-                }
+        if ($request->input('category_id') && $category = Category::find($request->input('category_id'))) {
+            if ($category->is_directory) {
+                // 如果是一个父类目，则使用 category_path 来筛选
+                $params['body']['query']['bool']['filter'][] = [
+                    'prefix' => ['category_path' => $category->path . $category->id . '-'],
+                ];
+            } else {
+                // 否则直接通过 category_id 筛选
+                $params['body']['query']['bool']['filter'][] = ['term' => ['category_id' => $category->id]];
             }
         }
 
@@ -69,6 +68,54 @@ class ProductsController extends Controller
             }
         }
 
+        // 只有当用户有输入搜索词或者使用了类目筛选的时候才会做聚合
+        if ($search || isset($category)) {
+            $params['body']['aggs'] = [
+                'properties' => [
+                    'nested' => [
+                        'path' => 'properties',
+                    ],
+                    'aggs'   => [
+                        'properties' => [
+                            'terms' => [
+                                'field' => 'properties.name',
+                            ],
+                            'aggs'  => [
+                                'value' => [
+                                    'terms' => [
+                                        'field' => 'properties.value',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ];
+        }
+
+        $propertyFilters = [];
+        if ($filterString = $request->input('filters')) {
+            $filterArray = explode('|', $filterString);
+            foreach ($filterArray as $filter) {
+                list($name, $value) = explode(':', $filter);
+                // 将用户筛选的属性添加到数组中
+                $propertyFilters[$name] = $value;
+            }
+        }
+
+        // 是否有提交 order 参数，如果有就赋值给 $order 变量
+        // order 参数用来控制商品的排序规则
+        if ($order = $request->input('order', '')) {
+            // 是否是以 _asc 或者 _desc 结尾
+            if (preg_match('/^(.+)_(asc|desc)$/', $order, $m)) {
+                // 如果字符串的开头是这 3 个字符串之一，说明是一个合法的排序值
+                if (in_array($m[1], ['price', 'sold_count', 'rating'])) {
+                    // 根据传入的排序值来构造排序参数
+                    $params['body']['sort'] = [[$m[1] => $m[2]]];
+                }
+            }
+        }
+
         $result = app('es')->search($params);
 
         // 通过 collect 函数将返回结果转为集合，并通过集合的 pluck 方法取到返回的商品 ID 数组
@@ -84,25 +131,32 @@ class ProductsController extends Controller
             'path' => route('products.index', false), // 手动构建分页的 url
         ]);
 
-        if ($request->input('category_id') && $category = Category::find($request->input('category_id'))) {
-            if ($category->is_directory) {
-                // 如果是一个父类目，则使用 category_path 来筛选
-                $params['body']['query']['bool']['filter'][] = [
-                    'prefix' => ['category_path' => $category->path . $category->id . '-'],
-                ];
-            } else {
-                // 否则直接通过 category_id 筛选
-                $params['body']['query']['bool']['filter'][] = ['term' => ['category_id' => $category->id]];
-            }
+        $properties = [];
+        // 如果返回结果里有 aggregations 字段，说明做了分面搜索
+        if (isset($result['aggregations'])) {
+            // 使用 collect 函数将返回值转为集合
+            $properties = collect($result['aggregations']['properties']['properties']['buckets'])
+                ->map(function ($bucket) {
+                    // 通过 map 方法取出我们需要的字段
+                    return [
+                        'key'    => $bucket['key'],
+                        'values' => collect($bucket['value']['buckets'])->pluck('key')->all(),
+                    ];
+                })->filter(function ($property) use ($propertyFilters) {
+                    // 过滤掉只剩下一个值 或者 已经在筛选条件里的属性
+                    return count($property['values']) > 1 && !isset($propertyFilters[$property['key']]);
+                });
         }
 
         return view('products.index', [
-            'products' => $pager,
-            'filters'  => [
+            'products'        => $pager,
+            'filters'         => [
                 'search' => $search,
                 'order'  => $order,
             ],
-            'category' => $category ?? null,
+            'category'        => $category ?? null,
+            'properties'      => $properties,
+            'propertyFilters' => $propertyFilters,
         ]);
     }
 
