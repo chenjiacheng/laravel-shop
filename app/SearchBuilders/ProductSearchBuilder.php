@@ -119,6 +119,14 @@ class ProductSearchBuilder
         return $this;
     }
 
+    // 设置 minimum_should_match 参数
+    public function minShouldMatch($count)
+    {
+        $this->params['body']['query']['bool']['minimum_should_match'] = (int)$count;
+
+        return $this;
+    }
+
     // 添加排序
     public function orderBy($field, $direction)
     {
